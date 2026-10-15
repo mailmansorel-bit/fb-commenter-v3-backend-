@@ -53,7 +53,7 @@ try {
 let timers = {};
 
 function getRandomDelaySec(){ return Math.floor(Math.random()*(145-60+1))+60; }
-function getRandomReplyDelay(){ return (Math.floor(Math.random()*(20-10+1))+10)*1000; }
+function getRandomReplyDelay(){ return 0; }
 
 async function publishComment(postId, message, token){
   const url = `https://graph.facebook.com/v20.0/${postId}/comments?message=${encodeURIComponent(message)}&access_token=${encodeURIComponent(token)}`;
