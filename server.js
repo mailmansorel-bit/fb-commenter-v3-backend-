@@ -4,56 +4,36 @@ const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
 
-console.log('=== DEMARRAGE BACKEND V3 ===');
-console.log('Node version:', process.version);
-console.log('Dir:', __dirname);
-console.log('Files:', fs.readdirSync(__dirname));
+console.log('=== BACKEND V4 FINAL - REPONSE 0s + CORS FIX ===');
 
 const app = express();
-app.use(cors());
+
+// CORS ULTRA PERMISSIF pour fix failed to fetch
+app.use(cors({
+  origin: '*',
+  methods: ['GET','POST','DELETE','OPTIONS'],
+  allowedHeaders: ['Content-Type','Authorization']
+}));
 app.use(express.json());
 
-// Dossiers - cree si manquant
+// Handle preflight
+app.options('*', cors());
+
 const JOBS_FILE = path.join(__dirname, 'jobs.json');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 
-try {
-  if (!fs.existsSync(JOBS_FILE)) {
-    fs.writeFileSync(JOBS_FILE, '[]');
-    console.log('jobs.json cree');
-  }
-} catch(e){
-  console.error('Erreur creation jobs.json:', e.message);
-}
+try { if (!fs.existsSync(JOBS_FILE)) fs.writeFileSync(JOBS_FILE, '[]'); } catch(e){}
+try { if (!fs.existsSync(PUBLIC_DIR)) fs.mkdirSync(PUBLIC_DIR, {recursive:true}); } catch(e){}
 
-try {
-  if (!fs.existsSync(PUBLIC_DIR)) {
-    fs.mkdirSync(PUBLIC_DIR, {recursive:true});
-    console.log('public cree');
-  }
-} catch(e){
-  console.error('Erreur creation public:', e.message);
-}
-
-// Servir frontend si existe
-if (fs.existsSync(PUBLIC_DIR)) {
-  app.use(express.static(PUBLIC_DIR));
-}
+if (fs.existsSync(PUBLIC_DIR)) app.use(express.static(PUBLIC_DIR));
 
 let jobs = [];
-try {
-  const data = fs.readFileSync(JOBS_FILE, 'utf8');
-  jobs = JSON.parse(data);
-  console.log(`Jobs charges: ${jobs.length}`);
-} catch(e){
-  console.log('Jobs vide ou erreur, init []:', e.message);
-  jobs = [];
-}
+try { jobs = JSON.parse(fs.readFileSync(JOBS_FILE,'utf8')); console.log(`Jobs charges: ${jobs.length}`);} catch(e){ jobs=[]; }
 
 let timers = {};
 
 function getRandomDelaySec(){ return Math.floor(Math.random()*(145-60+1))+60; }
-function getRandomReplyDelay(){ return 0; }
+function getRandomReplyDelay(){ return 0; } // 0s immediat comme demande
 
 async function publishComment(postId, message, token){
   const url = `https://graph.facebook.com/v20.0/${postId}/comments?message=${encodeURIComponent(message)}&access_token=${encodeURIComponent(token)}`;
@@ -70,16 +50,10 @@ async function publishReply(commentId, message, token){
   return j.id;
 }
 
-function saveJobs(){
-  try {
-    fs.writeFileSync(JOBS_FILE, JSON.stringify(jobs,null,2));
-  } catch(e){
-    console.error('Erreur saveJobs:', e.message);
-  }
-}
+function saveJobs(){ try{ fs.writeFileSync(JOBS_FILE, JSON.stringify(jobs,null,2)); }catch(e){ console.error(e.message); } }
 
 async function publishBatch(job){
-  console.log(`DEBUT batch ${job.id} - ${job.comments.length} coms`);
+  console.log(`DEBUT batch ${job.id} - ${job.comments.length} coms - reponse 0s`);
   const token = job.token;
   const postId = job.postId;
   for(let i=0;i<job.comments.length;i++){
@@ -91,16 +65,24 @@ async function publishBatch(job){
     }
     try{
       const commentId = await publishComment(postId, c.text, token);
-      console.log(`Com #${i+1} OK ${commentId}`);
+      console.log(`✅ Com #${i+1} OK ${commentId}`);
       if(c.reply && c.reply.trim()!==''){
         const rd = getRandomReplyDelay();
-        await new Promise(r=>setTimeout(r, rd));
-        const rid = await publishReply(commentId, c.reply, token);
-        console.log(`Reponse #${i+1} OK ${rid}`);
+        if(rd>0) await new Promise(r=>setTimeout(r, rd));
+        else console.log(`↳ Reponse #${i+1} immediate 0s`);
+        try{
+          const rid = await publishReply(commentId, c.reply, token);
+          console.log(`✅ Reponse #${i+1} OK ${rid} (0s)`);
+        }catch(re){
+          console.log(`❌ Echec reponse #${i+1}: ${re.message} - retry 2s`);
+          await new Promise(r=>setTimeout(r,2000));
+          try{
+            const rid2 = await publishReply(commentId, c.reply, token);
+            console.log(`✅ Reponse #${i+1} OK 2e essai ${rid2}`);
+          }catch(re2){ console.log(`❌ Echec definitif #${i+1}: ${re2.message}`); }
+        }
       }
-    }catch(e){
-      console.error(`Echec #${i+1}: ${e.message}`);
-    }
+    }catch(e){ console.error(`❌ Echec com #${i+1}: ${e.message}`); }
   }
   console.log(`Batch ${job.id} termine`);
   jobs = jobs.filter(j=>j.id!=job.id);
@@ -125,14 +107,21 @@ function scheduleJobs(){
 
 // ROUTES
 app.get('/', (req,res)=>{
-  res.send(`<h1>Backend V3 OK - Fix 254</h1><p>Jobs: ${jobs.length}</p><p><a href="/jobs">/jobs</a> | <a href="/health">/health</a></p><p>Node: ${process.version}</p>`);
+  res.send(`
+  <h1>✅ Backend V4 FINAL - REPONSE 0s + CORS OK</h1>
+  <p>Jobs en attente: ${jobs.length}</p>
+  <p><a href="/health">/health</a> - Test si backend reveille</p>
+  <p><a href="/jobs">/jobs</a> - Voir file</p>
+  <p>Node: ${process.version}</p>
+  <p style="color:green">CORS: * (tous domaines autorises) - fix failed to fetch</p>
+  <p>Reponse delai: 0s immediat</p>
+  `);
 });
-
-app.get('/health', (req,res)=>{res.json({status:'ok', jobs:jobs.length, node:process.version});});
-app.get('/jobs', (req,res)=>{res.json(jobs);});
+app.get('/health', (req,res)=>{ res.json({status:'ok', jobs:jobs.length, replyDelay:'0s', cors:'*'}); });
+app.get('/jobs', (req,res)=>{ res.json(jobs); });
 
 app.post('/jobs', (req,res)=>{
-  try {
+  try{
     const job = req.body;
     job.id = job.id || Date.now()+Math.random();
     if(job.postId && !job.postId.includes('_') && /^\d+$/.test(job.postId) && job.pageId){
@@ -141,48 +130,9 @@ app.post('/jobs', (req,res)=>{
     jobs.push(job);
     saveJobs();
     scheduleJobs();
-    console.log(`Nouveau job ${job.id}`);
-    res.json({ok:true, id:job.id});
-  } catch(e){
-    console.error(e);
-    res.status(500).json({error:e.message});
-  }
-});
-
-app.post('/jobs/import', (req,res)=>{
-  try {
-    const data = req.body;
-    let imported=0;
-    if(data.queue && Array.isArray(data.queue)){
-      data.queue.forEach(q=>{
-        q.token = q.token || data.token;
-        q.pageId = q.pageId || data.pageId;
-        q.id = q.id || Date.now()+Math.random();
-        jobs.push(q);
-        imported++;
-      });
-    }else if(data.comments){
-      const job = data;
-      job.id = job.id || Date.now()+Math.random();
-      jobs.push(job);
-      imported=1;
-    }
-    saveJobs();
-    scheduleJobs();
-    res.json({ok:true, imported});
-  } catch(e){
-    res.status(500).json({error:e.message});
-  }
-});
-
-app.post('/jobs/add-comment/:id', (req,res)=>{
-  const job = jobs.find(j=>j.id==req.params.id);
-  if(!job) return res.status(404).json({error:'job not found'});
-  const newCom = req.body;
-  newCom.id = newCom.id || Date.now()+Math.random();
-  job.comments.push(newCom);
-  saveJobs();
-  res.json({ok:true, total:job.comments.length});
+    console.log(`✅ Nouveau job ${job.id} - ${job.comments.length} coms - reponse 0s`);
+    res.json({ok:true, id:job.id, message:'Job ajoute - reponse 0s'});
+  }catch(e){ console.error(e); res.status(500).json({error:e.message}); }
 });
 
 app.delete('/jobs/:id', (req,res)=>{
@@ -191,7 +141,6 @@ app.delete('/jobs/:id', (req,res)=>{
   saveJobs();
   res.json({ok:true});
 });
-
 app.delete('/jobs', (req,res)=>{
   jobs=[]; Object.values(timers).forEach(t=>clearTimeout(t)); timers={}; saveJobs();
   res.json({ok:true});
@@ -199,32 +148,20 @@ app.delete('/jobs', (req,res)=>{
 
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, '0.0.0.0', ()=>{
-  console.log(`Backend V3 sur port ${PORT} - OK Fix 254`);
+  console.log(`✅ Backend V4 FINAL sur port ${PORT} - CORS * - Reponse 0s`);
   scheduleJobs();
-  
-  // Cron simple sans node-cron au debut pour eviter crash
-  try {
+  try{
     const cron = require('node-cron');
     cron.schedule('* * * * *', ()=>{
       const now=new Date();
       jobs.forEach(job=>{
         const at=new Date(job.scheduledAt);
-        if(at<=now && !timers[job.id]){
-          console.log(`Cron retard ${job.id}`);
-          publishBatch(job);
-        }
+        if(at<=now && !timers[job.id]){ console.log(`Cron retard ${job.id}`); publishBatch(job); }
       });
     });
-    console.log('Cron active');
-  } catch(e){
-    console.error('Cron erreur:', e.message);
-  }
+    console.log('Cron actif');
+  }catch(e){ console.log('Cron non dispo:', e.message); }
 });
 
-process.on('uncaughtException', (e)=>{
-  console.error('uncaughtException:', e);
-});
-
-process.on('unhandledRejection', (e)=>{
-  console.error('unhandledRejection:', e);
-});
+process.on('uncaughtException', (e)=>{ console.error('uncaughtException:', e); });
+process.on('unhandledRejection', (e)=>{ console.error('unhandledRejection:', e); });
